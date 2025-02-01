@@ -54,24 +54,36 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx):
 
 
 def trans_phishgraph_to_pyg_graph(neigs):
+    # phishgraph_metadata = [
+    #     [
+    #         {"src": "url", "dst": "dst_0", "relation": "relation_0-->"},
+    #         {"src": "dst_0", "dst": "url", "relation": "<--relation_0"},
+    #     ],
+    #     [
+    #         {"src": "url", "dst": "dst_1", "relation": "relation_1-->"},
+    #         {"src": "dst_1", "dst": "url", "relation": "<--relation_1"},
+    #     ],
+    #     [
+    #         {"src": "dst_0", "dst": "dst_2", "relation": "relation_2-->"},
+    #         {"src": "dst_2", "dst": "dst_0", "relation": "<--relation_2"},
+    #     ],
+    # ]
     phishgraph_metadata = [
         [
-            {"src": "url", "dst": "dst_0", "relation": "relation_0-->"},
-            {"src": "dst_0", "dst": "url", "relation": "<--relation_0"},
+            {"src": "url", "dst": "fqdn", "relation": "url_fqdn"},
+            {"src": "fqdn", "dst": "url", "relation": "fqdn_url"},
         ],
         [
-            {"src": "url", "dst": "dst_1", "relation": "relation_1-->"},
-            {"src": "dst_1", "dst": "url", "relation": "<--relation_1"},
+            {"src": "url", "dst": "word", "relation": "url_word"},
+            {"src": "word", "dst": "url", "relation": "word_url"},
         ],
         [
-            {"src": "dst_0", "dst": "dst_2", "relation": "relation_2-->"},
-            {"src": "dst_2", "dst": "dst_0", "relation": "<--relation_2"},
+            {"src": "fqdn", "dst": "registered_domain", "relation": "fqdn_registered_domain"},
+            {"src": "registered_domain", "dst": "fqdn", "relation": "registered_domain_fqdn"},
         ],
     ]
-    
     # Refer: https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.HeteroData.html?highlight=heterodata#torch_geometric.data.HeteroData
     d = defaultdict(dict)
-    metapaths = []
     for mp_i, nei1 in enumerate(neigs):
         dst_array_concat = np.concatenate(nei1)
         src_array_concat = []
@@ -175,27 +187,49 @@ def load_data(dataset, ratio, type_num):
     graphish_data = load_graphish_dataset(ratio, type_num, dataset)
     phish_graph = trans_phishgraph_to_pyg_graph(graphish_data[0])
 
-    mp2vec_metapaths = [
-        [
-            ("url", "relation_0-->", "dst_0"),
-            ("dst_0", "<--relation_0", "url"),
-            ("url", "relation_1-->", "dst_1"),
-            ("dst_1", "<--relation_1", "url"),
-        ],
-        # [
-        #     ("url", "relation_0-->", "dst_0"),
-        #     ("dst_0", "<--relation_0", "url"),
-        # ],
-        # [
-        #     ("url", "relation_0-->", "dst_0"),
-        #     ("dst_0", "relation_2-->", "dst_2"),
-        #     ("dst_2", "<--relation_2", "dst_0"),
-        #     ("dst_0", "<--relation_0", "url"),
-        # ],
-        # [
-        #     ("url", "relation_1-->", "dst_1"),
-        #     ("dst_1", "<--relation_1", "url"),
-        # ],
-    ]
+    # mp2vec_metapaths = [
+    #     # [
+    #     #     ("url", "relation_0-->", "dst_0"),
+    #     #     ("dst_0", "<--relation_0", "url"),
+    #     #     ("url", "relation_1-->", "dst_1"),
+    #     #     ("dst_1", "<--relation_1", "url"),
+    #     # ],
+    #     [
+    #         ("url", "relation_0-->", "dst_0"),
+    #         ("dst_0", "<--relation_0", "url"),
+    #     ],
+    #     [
+    #         ("url", "relation_0-->", "dst_0"),
+    #         ("dst_0", "relation_2-->", "dst_2"),
+    #         ("dst_2", "<--relation_2", "dst_0"),
+    #         ("dst_0", "<--relation_0", "url"),
+    #     ],
+    #     [
+    #         ("url", "relation_1-->", "dst_1"),
+    #         ("dst_1", "<--relation_1", "url"),
+    #     ],
+    # ]
 
+    mp2vec_metapaths = [
+        # [
+        #     ("url", "url_fqdn", "fqdn"),
+        #     ("fqdn", "fqdn_url", "url"),
+        #     ("url", "url_word", "word"),
+        #     ("word", "word_url", "url"),
+        # ],
+        [
+            ("url", "url_fqdn", "fqdn"),
+            ("fqdn", "fqdn_url", "url"),
+        ],
+        [
+            ("url", "url_fqdn", "fqdn"),
+            ("fqdn", "fqdn_registered_domain", "registered_domain"),
+            ("registered_domain", "registered_domain_fqdn", "fqdn"),
+            ("fqdn", "fqdn_url", "url"),
+        ],
+        [
+            ("url", "url_word", "word"),
+            ("word", "word_url", "url"),
+        ],
+    ]
     return graphish_data[1:], phish_graph, mp2vec_metapaths

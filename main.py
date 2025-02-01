@@ -70,12 +70,16 @@ def main(args):
                 mp2vec_url_feat = mp2vec_url_feat.cpu()
                 mp2vec_url_feats.append(mp2vec_url_feat)
                 torch.cuda.empty_cache()
-        mp2vec_feat = torch.FloatTensor(preprocess_features(mp2vec_url_feats[0]))
+        # mp2vec_feat = torch.FloatTensor(preprocess_features(mp2vec_url_feats[0]))
+        mp2vec_feat = torch.cat(
+            [torch.FloatTensor(preprocess_features(feat)) for feat in mp2vec_url_feats],
+            dim=1,
+        )
         node_feats[0] = torch.hstack([node_feats[0], mp2vec_feat])
 
     # model
     focused_feature_dim = feats_dim_list[0]
-    model = PreModel(args, metapath_num, focused_feature_dim)
+    model = PreModel(args, metapath_num, focused_feature_dim, args.mps_embedding_dim * len(mp2vec_metapaths))
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.l2_coef
@@ -92,7 +96,7 @@ def main(args):
     model.to(args.device)
     node_feats = [feat.to(args.device) for feat in node_feats]
     metapath_adjacency_matrices = [
-        mp.to(args.device) for mp in metapath_adjacency_matrices
+        metapath_adjacency_matrice.to(args.device) for metapath_adjacency_matrice in metapath_adjacency_matrices
     ]
     node_labels = node_labels.to(args.device)
     classifier_train_index = [i.to(args.device) for i in classifier_train_index]
