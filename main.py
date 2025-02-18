@@ -28,7 +28,7 @@ def main(args):
     # Load data
     (
         (
-            node_feats,  # Target node feats
+            url_feat,  # Target node feats
             metapath_adjacency_matrices,  # List of metapath adjacency matrices
             node_labels,  # target node labels
             classifier_train_index,  # index of training nodes, [[20 * nb_classes], [40 * nb_classes], [80 * nb_classes]]
@@ -39,7 +39,7 @@ def main(args):
         mp2vec_metapaths,
     ) = load_data(args.dataset, args.ratio, args.type_num)
     nb_classes = node_labels.shape[-1]
-    feats_dim_list = [node_feat.shape[1] for node_feat in node_feats]
+    url_feat_dim = url_feat.shape[1]
 
     metapath_num = len(metapath_adjacency_matrices)  # metapath nums
     print("Dataset: ", args.dataset)
@@ -75,11 +75,10 @@ def main(args):
             [torch.FloatTensor(preprocess_features(feat)) for feat in mp2vec_url_feats],
             dim=1,
         )
-        node_feats[0] = torch.hstack([node_feats[0], mp2vec_feat])
+        url_feat = torch.hstack([url_feat, mp2vec_feat])
 
     # model
-    focused_feature_dim = feats_dim_list[0]
-    graphish_model = PreModel(args, metapath_num, focused_feature_dim, args.mps_embedding_dim * len(mp2vec_metapaths))
+    graphish_model = PreModel(args, metapath_num, url_feat_dim, args.mps_embedding_dim * len(mp2vec_metapaths))
 
     optimizer = torch.optim.Adam(
         graphish_model.parameters(), lr=args.lr, weight_decay=args.l2_coef
@@ -94,7 +93,7 @@ def main(args):
         scheduler = None
 
     graphish_model.to(args.device)
-    node_feats = [feat.to(args.device) for feat in node_feats]
+    url_feat = url_feat.to(args.device)
     metapath_adjacency_matrices = [
         metapath_adjacency_matrice.to(args.device) for metapath_adjacency_matrice in metapath_adjacency_matrices
     ]
@@ -112,7 +111,7 @@ def main(args):
     for epoch in range(args.mae_epochs):
         graphish_model.train()
         optimizer.zero_grad()
-        loss, loss_item = graphish_model(node_feats, metapath_adjacency_matrices, epoch=epoch)
+        loss, loss_item = graphish_model(url_feat, metapath_adjacency_matrices, epoch=epoch)
         print(
             f"Epoch: {epoch}, loss: {loss_item}, lr: {optimizer.param_groups[0]['lr']:.6f}"
         )
@@ -135,8 +134,7 @@ def main(args):
     print("The best epoch is: ", best_epoch)
     graphish_model.load_state_dict(best_model_state_dict)
     graphish_model.eval()
-    # embeds = model.get_embeds(node_feats, metapath_adjacency_matrices, url_neighs)
-    embeds = graphish_model.get_embeds(node_feats, metapath_adjacency_matrices)
+    embeds = graphish_model.get_embeds(url_feat, metapath_adjacency_matrices)
     if args.task == "classification":
         macro_score_list, micro_score_list, auc_score_list = [], [], []
         for i in range(len(classifier_train_index)):

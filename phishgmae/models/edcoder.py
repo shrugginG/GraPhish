@@ -192,13 +192,13 @@ class PreModel(nn.Module):
             raise NotImplementedError
         return criterion
 
-    def forward(self, feats, mps, **kwargs):
+    def forward(self, feat, mps, **kwargs):
         # prepare for mp2vec feat pred
         if self.use_mp2vec_feat_pred:
-            mp2vec_feat = feats[0][:, self.focused_feature_dim :]
-            origin_feat = feats[0][:, : self.focused_feature_dim]
+            mp2vec_feat = feat[:, self.focused_feature_dim :]
+            origin_feat = feat[:, : self.focused_feature_dim]
         else:
-            origin_feat = feats[0]
+            origin_feat = feat
 
         # TAR
         dgl_graph_list = self.mps_to_gs(mps)
@@ -283,7 +283,7 @@ class PreModel(nn.Module):
         # masked_ufu_adjacency_mx = sparse_mx_to_torch_sparse_tensor(normalize_adj(masked_ufu_adjacency_mx))
         # mps[0] = masked_ufu_adjacency_mx.to(torch.device("cuda"))
 
-        masked_uwu_adjacency_mx = sp.load_npz("/home/jxlu/project/PhishDetect/GraPhish/data/graphish/urls_in_html/urls_in_html_graphish_4_part/masked_uwu_1.npz")
+        masked_uwu_adjacency_mx = sp.load_npz("/home/jxlu/project/PhishDetect/GraPhish/data/graphish/urls_in_html/urls_in_html_graphish_10_part/masked_uwu_1.npz")
         masked_uwu_adjacency_mx = sparse_mx_to_torch_sparse_tensor(normalize_adj(masked_uwu_adjacency_mx))
         mps[2] = masked_uwu_adjacency_mx.to(torch.device("cuda"))
 
@@ -320,11 +320,11 @@ class PreModel(nn.Module):
                 # loss += att_mp[i] * self.mp_edge_recon_loss(gs_recon_only_masked_places_list[i], mps_only_masked_places_list[i])
         return loss
 
-    def get_embeds(self, feats, mps, *varg):
+    def get_embeds(self, feat, mps, *args):
         if self.use_mp2vec_feat_pred:
-            origin_feat = feats[0][:, : self.focused_feature_dim]
+            origin_feat = feat[:, : self.focused_feature_dim]
         else:
-            origin_feat = feats[0]
+            origin_feat = feat
         gs = self.mps_to_gs(mps)
         rep, _ = self.encoder(gs, origin_feat)
         return rep.detach()

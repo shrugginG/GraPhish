@@ -78,8 +78,16 @@ def trans_phishgraph_to_pyg_graph(neigs):
             {"src": "word", "dst": "url", "relation": "word_url"},
         ],
         [
-            {"src": "fqdn", "dst": "registered_domain", "relation": "fqdn_registered_domain"},
-            {"src": "registered_domain", "dst": "fqdn", "relation": "registered_domain_fqdn"},
+            {
+                "src": "fqdn",
+                "dst": "registered_domain",
+                "relation": "fqdn_registered_domain",
+            },
+            {
+                "src": "registered_domain",
+                "dst": "fqdn",
+                "relation": "registered_domain_fqdn",
+            },
         ],
     ]
     # Refer: https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.HeteroData.html?highlight=heterodata#torch_geometric.data.HeteroData
@@ -112,11 +120,8 @@ def trans_phishgraph_to_pyg_graph(neigs):
 def load_graphish_dataset(ratio, type_num, dataset):
 
     sub_dataset_name = "_".join(dataset.split("_")[1:4])
-    partial_dataset_name = dataset.split("_",1)[1]
-    partial_dataset_path = (
-        DATASET_PATH
-        + f"{sub_dataset_name}/{partial_dataset_name}/"
-    )
+    partial_dataset_name = dataset.split("_", 1)[1]
+    partial_dataset_path = DATASET_PATH + f"{sub_dataset_name}/{partial_dataset_name}/"
 
     # Load and process url labels
     label = np.load(partial_dataset_path + "labels.npy").astype("int32")
@@ -125,14 +130,16 @@ def load_graphish_dataset(ratio, type_num, dataset):
     # Load url neighbors
     url_fqdn_neighs = np.load(partial_dataset_path + "nei_f.npy", allow_pickle=True)
     url_word_neighs = np.load(partial_dataset_path + "nei_w.npy", allow_pickle=True)
-    fqdn_registered_domain_neighs = np.load(partial_dataset_path + "nei_r.npy", allow_pickle=True)
+    fqdn_registered_domain_neighs = np.load(
+        partial_dataset_path + "nei_r.npy", allow_pickle=True
+    )
 
     # Load nodes features
     # feat_u = sp.eye(type_num[0])
     # feat_u = np.load(path + "url_feat.npy").astype("float32")
     feat_u = np.load(partial_dataset_path + "u_urlnet_feat.npy").astype("float32")
-    fqdn_feat = sp.eye(type_num[1])
-    word_feat = sp.eye(type_num[3])
+    # fqdn_feat = sp.eye(type_num[1])
+    # word_feat = sp.eye(type_num[3])
 
     # Load adjacency matrices
     ufu_adjacency_mx = sp.load_npz(partial_dataset_path + "ufu.npz")
@@ -143,8 +150,12 @@ def load_graphish_dataset(ratio, type_num, dataset):
     classifier_train_indices = [
         np.load(partial_dataset_path + "train_" + str(i) + ".npy") for i in ratio
     ]
-    classifier_test_indices = [np.load(partial_dataset_path + "test_" + str(i) + ".npy") for i in ratio]
-    classifier_val_indices = [np.load(partial_dataset_path + "val_" + str(i) + ".npy") for i in ratio]
+    classifier_test_indices = [
+        np.load(partial_dataset_path + "test_" + str(i) + ".npy") for i in ratio
+    ]
+    classifier_val_indices = [
+        np.load(partial_dataset_path + "val_" + str(i) + ".npy") for i in ratio
+    ]
 
     # Convert to torch tensors
     label = torch.FloatTensor(label)
@@ -157,8 +168,8 @@ def load_graphish_dataset(ratio, type_num, dataset):
 
     # feat_u = torch.FloatTensor(preprocess_features(feat_u))
     feat_u = torch.FloatTensor(feat_u)
-    fqdn_feat = torch.FloatTensor(preprocess_features(fqdn_feat))
-    word_feat = torch.FloatTensor(preprocess_features(word_feat))
+    # fqdn_feat = torch.FloatTensor(preprocess_features(fqdn_feat))
+    # word_feat = torch.FloatTensor(preprocess_features(word_feat))
 
     ufu_adjacency_mx = sparse_mx_to_torch_sparse_tensor(normalize_adj(ufu_adjacency_mx))
     ufrfu_adjacency_mx = sparse_mx_to_torch_sparse_tensor(
@@ -173,7 +184,7 @@ def load_graphish_dataset(ratio, type_num, dataset):
 
     return (
         [url_fqdn_neighs, url_word_neighs, fqdn_registered_domain_neighs],
-        [feat_u, fqdn_feat, word_feat],
+        feat_u,
         [ufu_adjacency_mx, ufrfu_adjacency_mx, uwu_adjacency_mx],
         label,
         classifier_train_indices,
