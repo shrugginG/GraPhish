@@ -1,5 +1,6 @@
 from itertools import chain
 from functools import partial
+import scipy.sparse as sp
 import torch
 import torch.nn as nn
 import dgl
@@ -8,14 +9,30 @@ from dgl import DropEdge
 from phishgmae.models.loss_func import sce_loss
 from phishgmae.utils import create_norm
 from phishgmae.models.han import HAN
+from phishgmae.utils.load_data import normalize_adj, sparse_mx_to_torch_sparse_tensor
+
+
+def add_self_loop_to_isolated_nodes(g):
+    in_degrees = g.in_degrees()
+    isolated_nodes = torch.where(in_degrees == 0)[0]
+    if len(isolated_nodes) > 0:
+        g = dgl.add_edges(g, isolated_nodes, isolated_nodes)
+    return g
 
 
 class PreModel(nn.Module):
-    def __init__(self, args, num_metapath: int, focused_feature_dim: int):
+    def __init__(
+        self,
+        args,
+        num_metapath: int,
+        focused_feature_dim: int,
+        mp2vec_feat_dim: int = None,
+    ):
         super(PreModel, self).__init__()
 
         self.num_metapath = num_metapath
         self.focused_feature_dim = focused_feature_dim
+        self.mp2vec_feat_dim = mp2vec_feat_dim
         self.hidden_dim = args.hidden_dim
         self.num_layers = args.num_layers
         self.num_heads = args.num_heads
@@ -91,11 +108,13 @@ class PreModel(nn.Module):
             concat_out=True,
         )
 
-        # type-specific attribute restoration
+        # Target Attribute Restoration (TAR)
         self.alpha_l = args.alpha_l
         self.attr_restoration_loss = self.setup_loss_fn(self.loss_fn, self.alpha_l)
         self.__cache_gs = None
-        self.enc_mask_token = nn.Parameter(torch.zeros(1, self.enc_dec_input_dim))
+        self.enc_mask_token = nn.Parameter(
+            torch.zeros(1, self.enc_dec_input_dim)
+        )  # Define the mask token
         self.encoder_to_decoder = nn.Linear(dec_in_dim, dec_in_dim, bias=False)
         self._replace_rate = args.replace_rate
         self._leave_unchanged = args.leave_unchanged
@@ -103,7 +122,7 @@ class PreModel(nn.Module):
             self._replace_rate + self._leave_unchanged < 1
         ), "Replace rate + leave_unchanged must be smaller than 1"
 
-        # mp edge recon
+        # Metapath-based Edge Reconstruction (MER)
         self.use_mp_edge_recon = args.use_mp_edge_recon
         self.mp_edge_recon_loss_weight = args.mp_edge_recon_loss_weight
         self.mp_edge_mask_rate = args.mp_edge_mask_rate
@@ -113,9 +132,7 @@ class PreModel(nn.Module):
             dec_in_dim, dec_in_dim, bias=False
         )
 
-        # mp2vec feat pred
-        self.mps_embedding_dim = args.mps_embedding_dim
-        # self.mps_embedding_dim = 192
+        # Positional Feature Prediction (PFP)
         self.use_mp2vec_feat_pred = args.use_mp2vec_feat_pred
         self.mp2vec_feat_pred_loss_weight = args.mp2vec_feat_pred_loss_weight
         self.mp2vec_feat_alpha_l = args.mp2vec_feat_alpha_l
@@ -123,14 +140,14 @@ class PreModel(nn.Module):
         self.mp2vec_feat_pred_loss = self.setup_loss_fn(
             self.loss_fn, self.mp2vec_feat_alpha_l
         )
-        self.enc_out_to_mp2vec_feat_mapping = nn.Sequential(
-            nn.Linear(dec_in_dim, self.mps_embedding_dim),
+        self.pfp_mlp_decoder = nn.Sequential(
+            nn.Linear(dec_in_dim, self.mp2vec_feat_dim),
             nn.PReLU(),
             nn.Dropout(self.mp2vec_feat_drop),
-            nn.Linear(self.mps_embedding_dim, self.mps_embedding_dim),
+            nn.Linear(self.mp2vec_feat_dim, self.mp2vec_feat_dim),
             nn.PReLU(),
             nn.Dropout(self.mp2vec_feat_drop),
-            nn.Linear(self.mps_embedding_dim, self.mps_embedding_dim),
+            nn.Linear(self.mp2vec_feat_dim, self.mp2vec_feat_dim),
         )
 
     @property
@@ -151,17 +168,17 @@ class PreModel(nn.Module):
             elif "," in input_mask_rate:  # 0.6,-0.1,0.4 stepwise increment/decrement
                 mask_rate = [float(i) for i in input_mask_rate.split(",")]
                 assert len(mask_rate) == 3
-                start = mask_rate[0]
-                step = mask_rate[1]
-                end = mask_rate[2]
+                start_mask_rate = mask_rate[0]
+                step_mask_rate = mask_rate[1]
+                end_mask_rate = mask_rate[2]
                 if get_min:
-                    return min(start, end)
+                    return min(start_mask_rate, end_mask_rate)
                 else:
-                    cur_mask_rate = start + epoch * step
-                    if cur_mask_rate < min(start, end) or cur_mask_rate > max(
-                        start, end
+                    cur_mask_rate = start_mask_rate + epoch * step_mask_rate
+                    if cur_mask_rate < min(start_mask_rate, end_mask_rate) or cur_mask_rate > max(
+                        start_mask_rate, end_mask_rate
                     ):
-                        return end
+                        return end_mask_rate
                     return cur_mask_rate
             else:
                 raise NotImplementedError
@@ -183,13 +200,13 @@ class PreModel(nn.Module):
         else:
             origin_feat = feats[0]
 
-        # type-specific attribute restoration
-        gs = self.mps_to_gs(mps)
+        # TAR
+        dgl_graph_list = self.mps_to_gs(mps)
         loss, feat_recon, att_mp, enc_out, mask_nodes = self.mask_attr_restoration(
-            origin_feat, gs, kwargs.get("epoch", None)
+            origin_feat, dgl_graph_list, kwargs.get("epoch", None)
         )
 
-        # mp based edge reconstruction
+        # MER
         if self.use_mp_edge_recon:
             edge_recon_loss = self.mask_mp_edge_reconstruction(
                 origin_feat, mps, kwargs.get("epoch", None)
@@ -199,7 +216,7 @@ class PreModel(nn.Module):
         # mp2vec feat pred
         if self.use_mp2vec_feat_pred:
             # MLP decoder
-            mp2vec_feat_pred = self.enc_out_to_mp2vec_feat_mapping(enc_out)
+            mp2vec_feat_pred = self.pfp_mlp_decoder(enc_out)
 
             mp2vec_feat_pred_loss = self.mp2vec_feat_pred_loss(
                 mp2vec_feat_pred, mp2vec_feat
@@ -236,13 +253,13 @@ class PreModel(nn.Module):
 
         return out_x, (mask_nodes, keep_nodes)
 
-    def mask_attr_restoration(self, feat, gs, epoch):
+    def mask_attr_restoration(self, feat, dgl_graph_list, epoch):
         cur_feat_mask_rate = self.get_mask_rate(self.feat_mask_rate, epoch=epoch)
-        use_x, (mask_nodes, keep_nodes) = self.encoding_mask_noise(
+        masked_x, (mask_nodes, keep_nodes) = self.encoding_mask_noise(
             feat, cur_feat_mask_rate
         )
 
-        enc_out, _ = self.encoder(gs, use_x, return_hidden=False)
+        enc_out, _ = self.encoder(dgl_graph_list, masked_x, return_hidden=False)
 
         # ---- attribute reconstruction ----
         enc_out_mapped = self.encoder_to_decoder(enc_out)
@@ -253,7 +270,7 @@ class PreModel(nn.Module):
         if self.decoder_type == "mlp":
             feat_recon = self.decoder(enc_out_mapped)
         else:
-            feat_recon, att_mp = self.decoder(gs, enc_out_mapped)
+            feat_recon, att_mp = self.decoder(dgl_graph_list, enc_out_mapped)
 
         x_init = feat[mask_nodes]
         x_rec = feat_recon[mask_nodes]
@@ -262,12 +279,27 @@ class PreModel(nn.Module):
         return loss, feat_recon, att_mp, enc_out, mask_nodes
 
     def mask_mp_edge_reconstruction(self, feat, mps, epoch):
+        # masked_ufu_adjacency_mx = sp.load_npz("/home/jxlu/project/PhishDetect/GraPhish/data/graphish/urls_in_html/urls_in_html_graphish_10_part/masked_ufu_1.npz")
+        # masked_ufu_adjacency_mx = sparse_mx_to_torch_sparse_tensor(normalize_adj(masked_ufu_adjacency_mx))
+        # mps[0] = masked_ufu_adjacency_mx.to(torch.device("cuda"))
+
+        masked_uwu_adjacency_mx = sp.load_npz("/home/jxlu/project/PhishDetect/GraPhish/data/graphish/urls_in_html/urls_in_html_graphish_4_part/masked_uwu_1.npz")
+        masked_uwu_adjacency_mx = sparse_mx_to_torch_sparse_tensor(normalize_adj(masked_uwu_adjacency_mx))
+        mps[2] = masked_uwu_adjacency_mx.to(torch.device("cuda"))
+
+        # masked_ufrfu_adjacency_mx = sp.load_npz("/home/jxlu/project/PhishDetect/GraPhish/data/graphish/urls_in_html/urls_in_html_graphish_10_part/masked_ufrfu_2.npz")
+        # masked_ufrfu_adjacency_mx = sparse_mx_to_torch_sparse_tensor(normalize_adj(masked_ufrfu_adjacency_mx))
+        # mps[1] = masked_ufrfu_adjacency_mx.to(torch.device("cuda"))
+
         masked_gs = self.mps_to_gs(mps)
         cur_mp_edge_mask_rate = self.get_mask_rate(self.mp_edge_mask_rate, epoch=epoch)
         drop_edge = DropEdge(p=cur_mp_edge_mask_rate)
         for i in range(len(masked_gs)):
-            masked_gs[i] = drop_edge(masked_gs[i])
-            masked_gs[i] = dgl.add_self_loop(masked_gs[i])  # we need to add self loop
+            if  i != 2:
+                masked_gs[i] = drop_edge(masked_gs[i])
+            masked_gs[i] = add_self_loop_to_isolated_nodes(masked_gs[i])
+            # masked_gs[i] = dgl.remove_self_loop(masked_gs[i])
+            # masked_gs[i] = dgl.add_self_loop(masked_gs[i])  # we need to add self loop
         enc_rep, _ = self.encoder(masked_gs, feat, return_hidden=False)
         rep = self.encoder_to_decoder_edge_recon(enc_rep)
 
@@ -305,18 +337,29 @@ class PreModel(nn.Module):
     def dec_params(self):
         return chain(*[self.encoder_to_decoder.parameters(), self.decoder.parameters()])
 
-    def mps_to_gs(self, mps):
+    def mps_to_gs(self, metapath_adjacency_matrices):
         if self.__cache_gs is None:
-            gs = []
+            dgl_graph_list = []
             mark = 0
-            for mp in mps:
+            for mp in metapath_adjacency_matrices:
+                node_cnt = mp.shape[0]
                 indices = mp._indices()
-                cur_graph = dgl.graph((indices[0], indices[1]))
-                if mark == 2:
-                    cur_graph = dgl.add_self_loop(cur_graph)
-                gs.append(cur_graph)
+
+                # if mark == 1:
+                #     cur_graph = dgl.graph((indices[0], indices[1]),num_nodes=node_cnt)
+                # else:
+                #     cur_graph = dgl.graph((indices[0], indices[1]))
+
+                cur_graph = dgl.graph((indices[0], indices[1]),num_nodes=node_cnt)
+
+                # if mark == 2 or mark == 0:
+                # if mark == 2:
+                    # cur_graph = dgl.remove_self_loop(cur_graph)
+                cur_graph = add_self_loop_to_isolated_nodes(cur_graph)
+                    # cur_graph = dgl.add_self_loop(cur_graph)
+                dgl_graph_list.append(cur_graph)
                 mark = mark + 1
-            return gs
+            return dgl_graph_list
         else:
             return self.__cache_gs
 
@@ -340,7 +383,7 @@ def setup_module(
     concat_out=True,
 ) -> nn.Module:
     if m_type == "han":
-        mod = HAN(
+        model = HAN(
             num_metapath=num_metapath,
             in_dim=in_dim,
             num_hidden=num_hidden,
@@ -360,4 +403,4 @@ def setup_module(
     else:
         raise NotImplementedError
 
-    return mod
+    return model

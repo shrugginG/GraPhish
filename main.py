@@ -79,10 +79,10 @@ def main(args):
 
     # model
     focused_feature_dim = feats_dim_list[0]
-    model = PreModel(args, metapath_num, focused_feature_dim, args.mps_embedding_dim * len(mp2vec_metapaths))
+    graphish_model = PreModel(args, metapath_num, focused_feature_dim, args.mps_embedding_dim * len(mp2vec_metapaths))
 
     optimizer = torch.optim.Adam(
-        model.parameters(), lr=args.lr, weight_decay=args.l2_coef
+        graphish_model.parameters(), lr=args.lr, weight_decay=args.l2_coef
     )
     # scheduler
     if args.scheduler:
@@ -93,7 +93,7 @@ def main(args):
     else:
         scheduler = None
 
-    model.to(args.device)
+    graphish_model.to(args.device)
     node_feats = [feat.to(args.device) for feat in node_feats]
     metapath_adjacency_matrices = [
         metapath_adjacency_matrice.to(args.device) for metapath_adjacency_matrice in metapath_adjacency_matrices
@@ -104,24 +104,23 @@ def main(args):
     classifier_test_index = [i.to(args.device) for i in classifier_test_index]
 
     cnt_wait = 0
-    best = 1e9
-    best_t = 0
+    best_loss = 1e9
+    best_epoch = 0
 
     starttime = datetime.datetime.now()
     best_model_state_dict = None
     for epoch in range(args.mae_epochs):
-        model.train()
+        graphish_model.train()
         optimizer.zero_grad()
-        # loss, loss_item = model(node_feats, metapath_adjacency_matrices, nei_index=url_neighs, epoch=epoch)
-        loss, loss_item = model(node_feats, metapath_adjacency_matrices, epoch=epoch)
+        loss, loss_item = graphish_model(node_feats, metapath_adjacency_matrices, epoch=epoch)
         print(
             f"Epoch: {epoch}, loss: {loss_item}, lr: {optimizer.param_groups[0]['lr']:.6f}"
         )
-        if loss < best:
-            best = loss
-            best_t = epoch
+        if loss < best_loss:
+            best_loss = loss
+            best_epoch = epoch
             cnt_wait = 0
-            best_model_state_dict = model.state_dict()
+            best_model_state_dict = graphish_model.state_dict()
         else:
             cnt_wait += 1
 
@@ -133,11 +132,11 @@ def main(args):
         if scheduler is not None:
             scheduler.step()
 
-    print("The best epoch is: ", best_t)
-    model.load_state_dict(best_model_state_dict)
-    model.eval()
+    print("The best epoch is: ", best_epoch)
+    graphish_model.load_state_dict(best_model_state_dict)
+    graphish_model.eval()
     # embeds = model.get_embeds(node_feats, metapath_adjacency_matrices, url_neighs)
-    embeds = model.get_embeds(node_feats, metapath_adjacency_matrices)
+    embeds = graphish_model.get_embeds(node_feats, metapath_adjacency_matrices)
     if args.task == "classification":
         macro_score_list, micro_score_list, auc_score_list = [], [], []
         for i in range(len(classifier_train_index)):
@@ -157,65 +156,7 @@ def main(args):
             macro_score_list.append(macro_score)
             micro_score_list.append(micro_score)
             auc_score_list.append(auc_score)
-        # Save results to CSV
-        results_dict = {
-            # Model args
-            "dataset": args.dataset,
-            "activation": args.activation,
-            "alpha_l": args.alpha_l,
-            "attn_drop": args.attn_drop,
-            "decoder": args.decoder,
-            "encoder": args.encoder,
-            "eva_lr": args.eva_lr,
-            "eva_wd": args.eva_wd,
-            "feat_drop": args.feat_drop,
-            "feat_mask_rate": args.feat_mask_rate,
-            "hidden_dim": args.hidden_dim,
-            "l2_coef": args.l2_coef,
-            "leave_unchanged": args.leave_unchanged,
-            "loss_fn": args.loss_fn,
-            "lr": args.lr,
-            "mask_rate": args.mask_rate,
-            "mp2vec_feat_alpha_l": args.mp2vec_feat_alpha_l,
-            "mp2vec_feat_drop": args.mp2vec_feat_drop,
-            "mp2vec_feat_pred_loss_weight": args.mp2vec_feat_pred_loss_weight,
-            "mp_edge_alpha_l": args.mp_edge_alpha_l,
-            "mp_edge_mask_rate": args.mp_edge_mask_rate,
-            "mp_edge_recon_loss_weight": args.mp_edge_recon_loss_weight,
-            "nei_num": args.nei_num,
-            "num_heads": args.num_heads,
-            "num_layers": args.num_layers,
-            "num_out_heads": args.num_out_heads,
-            "optimizer": args.optimizer,
-            "patience": args.patience,
-            "replace_rate": args.replace_rate,
-            "residual": args.residual,
-            "scheduler": args.scheduler,
-            "scheduler_gamma": args.scheduler_gamma,
-            # Results
-            "macro_f1": macro_score_list,
-            "micro_f1": micro_score_list,
-            "auc": auc_score_list,
-        }
-
-        import pandas as pd
-
-        results_df = pd.DataFrame([results_dict])
-
-        # Check if file exists to determine if we need to write headers
-        import os
-
-        file_exists = os.path.isfile(f"results/{args.dataset}_results.csv")
-
-        # Append results to CSV, only write headers if file doesn't exist
-        results_df.to_csv(
-            f"./result/{args.dataset}_results.csv",
-            mode="a",
-            header=not file_exists,
-            index=False,
-        )
-
-        print(f"Results appended to results/{args.dataset}_results.csv")
+     
     else:
         sys.exit("wrong args.task.")
 

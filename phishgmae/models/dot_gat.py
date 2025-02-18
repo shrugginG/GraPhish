@@ -5,7 +5,7 @@ import dgl.function as fn
 from dgl.nn.functional import edge_softmax
 from dgl.utils import expand_as_pair
 
-from hgmae.utils.utils import create_activation
+from phishgmae.utils.utils import create_activation
 
 
 class DotGAT(nn.Module):
