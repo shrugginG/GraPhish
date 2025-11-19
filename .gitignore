@@ -1,0 +1,11 @@
+.vscode/
+.venv/
+data/dataset/results/
+data/logs/*
+data/results/*
+data/urlnode_embedding_bak
+main.pdf
+modify.md
+__pycache__/
+result/
+test/
