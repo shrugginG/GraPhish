@@ -1,7 +1,10 @@
-# GraPhish（PhishScope）使用说明
+# GraPhish
 
 本代码仓库对应论文 GraPhish: Self-Supervised Phishing Detection via
 Website Relationship Graph Analysis。
+
+## 原始数据集
+PhishScope数据集位于：[PhishScope](https://drive.google.com/file/d/1Q4sF71hWTBUAuZLfcBlc5ZxtXxU2QeG-/view?usp=sharing)。
 
 ## 数据布局
 - 原始拆分：`data/dataset/phishscope/phishscope_part{0-4}`

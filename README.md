@@ -1,7 +1,12 @@
-# GraPhish (PhishScope) Pipeline
+# GraPhish 
 
 This repository contains the GraPhish code that accompanies the paper: GraPhish: Self-Supervised Phishing Detection via
 Website Relationship Graph Analysis.
+
+# Raw Dataset
+Our PhishScope dataset are available at [google drive](https://drive.google.com/file/d/1Q4sF71hWTBUAuZLfcBlc5ZxtXxU2QeG-/view?usp=sharing).
+
+
 
 ## Dataset Layout
 - Raw PhishScope splits: `data/dataset/phishscope/phishscope_part{0-4}`
